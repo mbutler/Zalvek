@@ -1,0 +1,14 @@
+{
+  "name": "stego",
+  "module": "stego.js",
+  "type": "module",
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "jimp": "^1.6.0"
+  }
+}

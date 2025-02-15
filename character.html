@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Cryptographic Character: Signed Versioning</title>
+  <style>
+    /* Basic styling */
+    body {
+      font-family: sans-serif;
+      margin: 20px;
+      background: #f8f8f8;
+    }
+    .character-container {
+      max-width: 600px;
+      margin: auto;
+      background: #fff;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+    }
+    .section {
+      margin-top: 20px;
+      border-top: 1px solid #ccc;
+      padding-top: 10px;
+    }
+    button {
+      margin: 5px;
+      padding: 10px 15px;
+      font-size: 1rem;
+    }
+    input[type="file"] {
+      margin: 5px 0;
+    }
+    textarea {
+      width: 100%;
+      box-sizing: border-box;
+    }
+    #status, #keyStatus, #challengeStatus, #versionStatus {
+      white-space: pre-wrap;
+      background: #eef;
+      padding: 10px;
+      border: 1px solid #ccd;
+      border-radius: 4px;
+    }
+  </style>
+
+  <!--
+    We store version data in meta tags:
+      - name="character-version"
+      - name="character-timestamp"
+      - name="version-signature"
+      - name="public-key"
+
+    The JavaScript will read/write these to sign or verify version info.
+  -->
+  <meta name="character-version" content="1" />
+  <meta name="character-timestamp" content="" />
+  <meta name="version-signature" content="" />
+  <meta name="public-key" content="" />
+
+</head>
+<body>
+  <div class="character-container">
+    <!-- Character Header -->
+    <div class="section">
+      <h1 id="charName">Zalvek the Cipher</h1>
+      <p id="charClass">Class: Ciphermage | Level: 3</p>
+      <p><strong>Public Key (Body):</strong></p>
+      <!-- Display the public key -->
+      <textarea id="publicKeyDisplay" rows="6" readonly></textarea>
+    </div>
+
+    <!-- Key Management Section -->
+    <div class="section">
+      <h2>Key Management</h2>
+      <button id="generateKeyBtn">Generate New Key Pair</button>
+      <button id="downloadPrivateKeyBtn" disabled>Download Private Key</button>
+      <br>
+      <label for="loadPrivateKey">Reload Private Key (JSON):</label>
+      <input type="file" id="loadPrivateKey" accept=".json">
+      <button id="verifyKeyPairBtn" disabled>Verify Key Pair</button>
+      <p id="keyStatus">Status messages will appear here.</p>
+    </div>
+
+    <!-- Challenge/Response Section -->
+    <div class="section">
+      <h2>Challenge/Response Demo</h2>
+      <p>
+        Generate a random challenge, sign it with your private key, and then verify the signature using the public key.
+      </p>
+      <button id="generateChallengeBtn">Generate Challenge</button>
+      <p>Challenge: <span id="challengeDisplay"></span></p>
+      <button id="signChallengeBtn" disabled>Sign Challenge</button>
+      <p>Signature:</p>
+      <!-- Use a textarea for the challenge signature -->
+      <textarea id="challengeSignatureDisplay" rows="4" style="width: 100%;" readonly></textarea>
+      <button id="verifyChallengeBtn" disabled>Verify Challenge Response</button>
+      <p id="challengeStatus">Challenge status messages will appear here.</p>
+    </div>
+
+    <!-- Signed Versioning Section -->
+    <div class="section">
+      <h2>Signed Versioning</h2>
+      <p>Version: <span id="versionNumber"></span></p>
+      <p>Timestamp: <span id="versionTimestamp"></span></p>
+      <p>Version Signature:</p>
+      <textarea id="versionSignatureDisplay" rows="4" style="width: 100%;" readonly></textarea>
+      <br>
+      <button id="signVersionBtn" disabled>Sign & Export New Version</button>
+      <button id="verifyVersionBtn" disabled>Verify Version Signature</button>
+      <p id="versionStatus">Version status messages will appear here.</p>
+    </div>
+  </div>
+
+  <!-- Inline JavaScript -->
+  <script>
+    // ===============
+    // GLOBALS
+    // ===============
+    let privateKey = null
+    let publicKeyPem = ""
+    let currentChallenge = ""
+    let currentSignature = ""
+
+    // We'll keep track of the version data from meta tags
+    let currentVersion = 1
+    let versionSignature = ""
+    let versionTimestamp = ""
+
+    // ===============
+    // ON LOAD
+    // ===============
+    window.addEventListener("load", () => {
+      // 1. Retrieve the public key from <meta> and set it in the textarea
+      const publicKeyMeta = document.querySelector('meta[name="public-key"]')
+      if (publicKeyMeta && publicKeyMeta.content) {
+        publicKeyPem = publicKeyMeta.content
+        document.getElementById("publicKeyDisplay").value = publicKeyPem
+      }
+
+      // 2. Read version info from meta tags
+      const versionMeta = document.querySelector('meta[name="character-version"]')
+      const timestampMeta = document.querySelector('meta[name="character-timestamp"]')
+      const signatureMeta = document.querySelector('meta[name="version-signature"]')
+
+      if (versionMeta && versionMeta.content) {
+        currentVersion = parseInt(versionMeta.content, 10) || 1
+      }
+      if (timestampMeta && timestampMeta.content) {
+        versionTimestamp = timestampMeta.content
+      }
+      if (signatureMeta && signatureMeta.content) {
+        versionSignature = signatureMeta.content
+      }
+
+      // 3. Update the displayed version info
+      updateVersionUI()
+    })
+
+    // Helper function to update version UI
+    function updateVersionUI() {
+      document.getElementById("versionNumber").innerText = currentVersion
+      document.getElementById("versionTimestamp").innerText = versionTimestamp
+      document.getElementById("versionSignatureDisplay").value = versionSignature
+    }
+
+    // ===============
+    // KEY GENERATION & MANAGEMENT
+    // ===============
+
+    async function generateKeyPair() {
+      try {
+        const keyPair = await crypto.subtle.generateKey(
+          {
+            name: "RSASSA-PKCS1-v1_5",
+            modulusLength: 4096,
+            publicExponent: new Uint8Array([1, 0, 1]),
+            hash: "SHA-512"
+          },
+          true,
+          ["sign", "verify"]
+        )
+        privateKey = keyPair.privateKey
+        publicKeyPem = await exportPublicKeyAsPEM(keyPair.publicKey)
+
+        // Display the public key in the textarea
+        document.getElementById("publicKeyDisplay").value = publicKeyPem
+
+        document.getElementById("downloadPrivateKeyBtn").disabled = false
+        document.getElementById("signChallengeBtn").disabled = false
+        document.getElementById("verifyChallengeBtn").disabled = false
+        document.getElementById("verifyKeyPairBtn").disabled = false
+        document.getElementById("signVersionBtn").disabled = false
+        document.getElementById("versionStatus").innerText = ""
+
+        document.getElementById("keyStatus").innerText = "✅ Key pair generated successfully!"
+      } catch (error) {
+        console.error("Key generation error:", error)
+        document.getElementById("keyStatus").innerText = "❌ Error generating key pair."
+      }
+    }
+
+    async function exportPublicKeyAsPEM(publicKey) {
+      const exported = await crypto.subtle.exportKey("spki", publicKey)
+      const exportedAsString = btoa(String.fromCharCode(...new Uint8Array(exported)))
+      return `-----BEGIN PUBLIC KEY-----\n${exportedAsString}\n-----END PUBLIC KEY-----`
+    }
+
+    async function downloadPrivateKey() {
+      if (!privateKey) {
+        document.getElementById("keyStatus").innerText = "❌ No private key available. Generate a key pair first."
+        return
+      }
+      try {
+        const exportedPrivateKey = await crypto.subtle.exportKey("pkcs8", privateKey)
+        const privateKeyBase64 = btoa(String.fromCharCode(...new Uint8Array(exportedPrivateKey)))
+        const privateKeyJSON = JSON.stringify({
+          pem: `-----BEGIN PRIVATE KEY-----\n${privateKeyBase64}\n-----END PRIVATE KEY-----`
+        }, null, 2)
+
+        const blob = new Blob([privateKeyJSON], { type: "application/json" })
+        const link = document.createElement("a")
+        link.href = URL.createObjectURL(blob)
+        link.download = "spirit.json"
+        document.body.appendChild(link)
+        link.click()
+        document.body.removeChild(link)
+        document.getElementById("keyStatus").innerText = "✅ Private key downloaded!"
+      } catch (error) {
+        console.error("Error exporting private key:", error)
+        document.getElementById("keyStatus").innerText = "❌ Error exporting private key."
+      }
+    }
+
+    document.getElementById("loadPrivateKey").addEventListener("change", event => {
+      const file = event.target.files[0]
+      if (!file) return
+      const reader = new FileReader()
+      reader.onload = async e => {
+        try {
+          const keyData = JSON.parse(e.target.result)
+          privateKey = await importPrivateKey(keyData.pem)
+          document.getElementById("keyStatus").innerText = "✅ Private key loaded successfully!"
+          document.getElementById("signChallengeBtn").disabled = false
+          document.getElementById("verifyChallengeBtn").disabled = false
+          document.getElementById("verifyKeyPairBtn").disabled = false
+          document.getElementById("signVersionBtn").disabled = false
+        } catch (err) {
+          console.error(err)
+          document.getElementById("keyStatus").innerText = "❌ Error loading private key."
+        }
+      }
+      reader.readAsText(file)
+    })
+
+    async function importPrivateKey(pem) {
+      const pemHeaderFooterRemoved = pem.replace(/-----[^-]+-----/g, "").replace(/\s/g, "")
+      const binaryDerString = atob(pemHeaderFooterRemoved)
+      const binaryDer = new Uint8Array(binaryDerString.length)
+      for (let i = 0; i < binaryDerString.length; i++) {
+        binaryDer[i] = binaryDerString.charCodeAt(i)
+      }
+      return crypto.subtle.importKey(
+        "pkcs8",
+        binaryDer.buffer,
+        { name: "RSASSA-PKCS1-v1_5", hash: "SHA-512" },
+        true,
+        ["sign"]
+      )
+    }
+
+    async function importPublicKey(pem) {
+      const pemHeaderFooterRemoved = pem.replace(/-----[^-]+-----/g, "").replace(/\s/g, "")
+      const binaryDerString = atob(pemHeaderFooterRemoved)
+      const binaryDer = new Uint8Array(binaryDerString.length)
+      for (let i = 0; i < binaryDerString.length; i++) {
+        binaryDer[i] = binaryDerString.charCodeAt(i)
+      }
+      return crypto.subtle.importKey(
+        "spki",
+        binaryDer.buffer,
+        { name: "RSASSA-PKCS1-v1_5", hash: "SHA-512" },
+        true,
+        ["verify"]
+      )
+    }
+
+    async function verifyKeyPair() {
+      if (!privateKey) {
+        document.getElementById("keyStatus").innerText = "❌ No private key loaded."
+        return
+      }
+      const testChallenge = "testchallenge"
+      try {
+        const signature = await signChallenge(testChallenge)
+        const valid = await verifyChallenge(testChallenge, signature)
+        if (valid) {
+          document.getElementById("keyStatus").innerText = "✅ The loaded private key matches the public key."
+        } else {
+          document.getElementById("keyStatus").innerText = "❌ The loaded private key does NOT match the public key."
+        }
+      } catch (err) {
+        document.getElementById("keyStatus").innerText = "❌ Error verifying key pair: " + err
+      }
+    }
+
+    document.getElementById("generateKeyBtn").addEventListener("click", generateKeyPair)
+    document.getElementById("downloadPrivateKeyBtn").addEventListener("click", downloadPrivateKey)
+    document.getElementById("verifyKeyPairBtn").addEventListener("click", verifyKeyPair)
+
+    // ===============
+    // CHALLENGE/RESPONSE
+    // ===============
+
+    function generateChallenge() {
+      currentChallenge = Math.random().toString(36).substring(2, 10)
+      document.getElementById("challengeDisplay").innerText = currentChallenge
+      document.getElementById("challengeStatus").innerText = "Challenge generated."
+    }
+
+    async function signChallenge(challenge) {
+      const encoder = new TextEncoder()
+      const challengeBuffer = encoder.encode(challenge)
+      if (!privateKey) {
+        throw new Error("No private key loaded.")
+      }
+      const signatureBuffer = await crypto.subtle.sign(
+        { name: "RSASSA-PKCS1-v1_5" },
+        privateKey,
+        challengeBuffer
+      )
+      return btoa(String.fromCharCode(...new Uint8Array(signatureBuffer)))
+    }
+
+    async function verifyChallenge(challenge, signature) {
+      const encoder = new TextEncoder()
+      const challengeBuffer = encoder.encode(challenge)
+      const signatureBuffer = Uint8Array.from(atob(signature), c => c.charCodeAt(0))
+      const pubKey = await importPublicKey(publicKeyPem)
+      const valid = await crypto.subtle.verify(
+        { name: "RSASSA-PKCS1-v1_5" },
+        pubKey,
+        signatureBuffer,
+        challengeBuffer
+      )
+      return valid
+    }
+
+    document.getElementById("generateChallengeBtn").addEventListener("click", () => {
+      generateChallenge()
+      document.getElementById("signChallengeBtn").disabled = false
+    })
+
+    document.getElementById("signChallengeBtn").addEventListener("click", async () => {
+      if (!currentChallenge) {
+        document.getElementById("challengeStatus").innerText = "❌ Please generate a challenge first."
+        return
+      }
+      try {
+        currentSignature = await signChallenge(currentChallenge)
+        document.getElementById("challengeSignatureDisplay").value = currentSignature
+        document.getElementById("challengeStatus").innerText = "Challenge signed."
+      } catch (err) {
+        console.error(err)
+        document.getElementById("challengeStatus").innerText = "❌ Error signing challenge: " + err
+      }
+    })
+
+    document.getElementById("verifyChallengeBtn").addEventListener("click", async () => {
+      if (!currentChallenge || !currentSignature) {
+        document.getElementById("challengeStatus").innerText = "❌ Missing challenge or signature."
+        return
+      }
+      try {
+        const valid = await verifyChallenge(currentChallenge, currentSignature)
+        if (valid) {
+          document.getElementById("challengeStatus").innerText = "✅ Challenge signature verified!"
+        } else {
+          document.getElementById("challengeStatus").innerText = "❌ Challenge signature verification failed."
+        }
+      } catch (err) {
+        console.error(err)
+        document.getElementById("challengeStatus").innerText = "❌ Error verifying challenge: " + err
+      }
+    })
+
+    // ===============
+    // SIGNED VERSIONING
+    // ===============
+
+    async function signAndExportNewVersion() {
+      if (!privateKey) {
+        document.getElementById("versionStatus").innerText = "❌ Private key not loaded."
+        return
+      }
+
+      try {
+        // 1. Increment version
+        currentVersion += 1
+
+        // 2. Generate a new timestamp
+        versionTimestamp = new Date().toISOString()
+
+        // 3. Create version metadata object
+        const versionData = {
+          version: currentVersion,
+          timestamp: versionTimestamp,
+          publicKey: publicKeyPem
+        }
+
+        // 4. Sign this metadata
+        const encoder = new TextEncoder()
+        const dataString = JSON.stringify(versionData)
+        const dataBuffer = encoder.encode(dataString)
+        const signatureBuffer = await crypto.subtle.sign(
+          { name: "RSASSA-PKCS1-v1_5" },
+          privateKey,
+          dataBuffer
+        )
+        versionSignature = btoa(String.fromCharCode(...new Uint8Array(signatureBuffer)))
+
+        // 5. Update the meta tags
+        document.querySelector('meta[name="character-version"]').setAttribute("content", currentVersion)
+        document.querySelector('meta[name="character-timestamp"]').setAttribute("content", versionTimestamp)
+        document.querySelector('meta[name="version-signature"]').setAttribute("content", versionSignature)
+
+        // **Fix**: Make sure the public key is in the <meta> so it loads next time
+        document.querySelector('meta[name="public-key"]').setAttribute("content", publicKeyPem)
+
+        // 6. Update local UI
+        updateVersionUI()
+
+        // 7. Export updated HTML
+        exportUpdatedCharacterFile()
+
+        document.getElementById("versionStatus").innerText = `✅ Signed new version (${currentVersion}) and exported file.`
+      } catch (err) {
+        console.error("Error signing version:", err)
+        document.getElementById("versionStatus").innerText = "❌ Error signing version: " + err
+      }
+    }
+
+    function exportUpdatedCharacterFile() {
+      const updatedHTML = document.documentElement.outerHTML
+      const blob = new Blob([updatedHTML], { type: "text/html" })
+
+      // Example: name the file using the version number
+      const filename = `character_v${currentVersion}.html`
+
+      const link = document.createElement("a")
+      link.href = URL.createObjectURL(blob)
+      link.download = filename
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+    }
+
+    async function verifyCurrentVersion() {
+      if (!publicKeyPem) {
+        document.getElementById("versionStatus").innerText = "❌ Public key not set."
+        return
+      }
+      if (!versionSignature) {
+        document.getElementById("versionStatus").innerText = "❌ No version signature found."
+        return
+      }
+
+      try {
+        // Re-create the version metadata object
+        const versionData = {
+          version: currentVersion,
+          timestamp: versionTimestamp,
+          publicKey: publicKeyPem
+        }
+        const dataString = JSON.stringify(versionData)
+        const encoder = new TextEncoder()
+        const dataBuffer = encoder.encode(dataString)
+
+        // Convert the stored signature from base64
+        const signatureBuffer = Uint8Array.from(
+          atob(versionSignature),
+          c => c.charCodeAt(0)
+        )
+
+        // Import the public key and verify
+        const pubKey = await importPublicKey(publicKeyPem)
+        const valid = await crypto.subtle.verify(
+          { name: "RSASSA-PKCS1-v1_5" },
+          pubKey,
+          signatureBuffer,
+          dataBuffer
+        )
+
+        if (valid) {
+          document.getElementById("versionStatus").innerText = `✅ Version ${currentVersion} signature is valid.`
+        } else {
+          document.getElementById("versionStatus").innerText = `❌ Version ${currentVersion} signature is invalid.`
+        }
+      } catch (err) {
+        console.error("Error verifying version:", err)
+        document.getElementById("versionStatus").innerText = "❌ Error verifying version: " + err
+      }
+    }
+
+    document.getElementById("signVersionBtn").addEventListener("click", signAndExportNewVersion)
+    document.getElementById("verifyVersionBtn").addEventListener("click", verifyCurrentVersion)
+  </script>
+</body>
+</html>
