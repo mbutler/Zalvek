@@ -1,169 +1,183 @@
-#!/usr/bin/env bun
-
-import { Jimp } from "jimp"
-import { readFileSync } from "fs"
-
-// Extracts the embedded message from an image
-function extractMessageFromImage(image) {
-  const data = image.bitmap.data
-  const bits = []
-
-  // Read LSBs from R, G, B channels of each pixel
-  for (let i = 0; i < data.length; i += 4) {
-    for (let j = 0; j < 3; j++) {
-      bits.push(data[i + j] & 1)
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Stego Key Verification</title>
+  <meta name="public-key" content="-----BEGIN PUBLIC KEY-----\nMIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEA4IeJwmbZRmsJQnF2t2dD\nRevebXMHdpgDccUGPx1Mw/CRAc4cKTk3/nD37g9VzTD+5tU5SZwIuL7EIY/uiuYZ\nHbPABwdjLEYyMjW34i/iM8v2/JvCJ+Sa9s972n7dU1MlfeZFJhy0AAQnaKvDbpsn\nI9hdSx+o7WD6Wupt5hySTkWhSXKNPjn1tZ3uyOr321t8cYf1oRbJyCE0Q8g5l3T5\nV/rdSmcIL1fNXZZp6CtFdWxKiiz/67meLn9O0iqn4qLd/vHlCgZz8gOZJjX0jnAU\nAyK/JlZC1VlWCNO6rH0NFztm8sgYUDAvQ3SFlypfzrwMfVb3wPFi+yoSZcIeQ9J9\nE0rE2NMei9IW5oNKpe7NGPaOMR/Pw4qjZYB6YmeyWvC/mqcGAUfTIMbKY0JzgDMg\nAKa+TpxxineLHY7n+p5NugNQShMHt0L7GQwIJbvu0claIZDubJ+DkcTbqgTVnDUA\nM/0tPC2kKkpRQrsG+83Hq35Hpsc+f3TbDvL9AoOUm5TixvMI4MfzT6z4j3le+UqV\nmNT+tYsmV15yqa1lKc3arZtkPPfqdnQ2OmHPw9HKm4IRdPGugt1N5PIlD6p6lg6o\nwEu1lx4tnvB4QZb1OnOH1UhuuT8Zy/rbksQ2blhaHeIVjLh6zdq1xvbbxbCRfesp\n+IV9f1tNgj+cNoPo8HaS8mkCAwEAAQ==\n-----END PUBLIC KEY-----">
+  <style>
+    body { font-family: sans-serif; margin: 20px; background: #f8f8f8; }
+    .container { max-width: 800px; margin: auto; background: #fff; padding: 20px;
+                 border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15); }
+    img { max-width: 100%; height: auto; border: 1px solid #ccc; margin-bottom: 1em; }
+    button { margin: 5px; padding: 10px 15px; font-size: 1rem; }
+    #result { margin-top: 1em; padding: 1em; border-radius: 4px; }
+    .success { background: #e6ffe6; color: #006600; }
+    .error { background: #ffe6e6; color: #660000; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Stego Key Verification</h1>
+    <p>This page holds a public key. Click the button below to load the stego image and extract the private key.</p>
+    <button id="loadImageBtn">Load Stego Image</button>
+    <input type="file" id="imageInput" accept="image/png" style="display:none">
+    <div id="imageContainer"></div>
+    <div id="result"></div>
+  </div>
+  <script>
+    function extractMessageFromImageData(imageData) {
+      const data = imageData.data;
+      const bits = [];
+      for (let i = 0; i < data.length; i += 4) {
+        for (let j = 0; j < 3; j++) {
+          bits.push(data[i + j] & 1);
+        }
+      }
+      let msgLength = 0;
+      for (let i = 0; i < 32; i++) {
+        msgLength = (msgLength << 1) | bits[i];
+      }
+      console.log("Extracted message length:", msgLength);
+      if (msgLength <= 0 || msgLength > (bits.length - 32) / 8) {
+        throw new Error("Invalid message length");
+      }
+      const messageBytes = new Uint8Array(msgLength);
+      for (let i = 0; i < msgLength; i++) {
+        let byte = 0;
+        for (let j = 0; j < 8; j++) {
+          byte = (byte << 1) | bits[32 + i * 8 + j];
+        }
+        messageBytes[i] = byte;
+      }
+      return new TextDecoder().decode(messageBytes);
     }
-  }
-
-  if (bits.length < 32) {
-    console.error("Error: Not enough data in the image.")
-    process.exit(1)
-  }
-
-  // Extract message length (first 32 bits)
-  let msgLength = 0
-  for (let i = 0; i < 32; i++) {
-    msgLength = (msgLength << 1) | bits[i]
-  }
-
-  const totalMsgBits = msgLength * 8
-  if (bits.length < 32 + totalMsgBits) {
-    console.error("Error: Not enough data for the hidden message.")
-    process.exit(1)
-  }
-
-  // Extract message bytes
-  const messageBytes = []
-  for (let i = 0; i < msgLength; i++) {
-    let byte = 0
-    for (let j = 0; j < 8; j++) {
-      byte = (byte << 1) | bits[32 + i * 8 + j]
+    
+    async function importPrivateKey(pem) {
+      try {
+        // Convert any escaped newline sequences (literal "\n") into actual newlines
+        pem = pem.replace(/\\n/g, '\n');
+        const pemHeader = "-----BEGIN PRIVATE KEY-----";
+        const pemFooter = "-----END PRIVATE KEY-----";
+        let pemContents = pem.trim();
+        if (pemContents.includes(pemHeader)) {
+          pemContents = pemContents.replace(pemHeader, "");
+        }
+        if (pemContents.includes(pemFooter)) {
+          pemContents = pemContents.replace(pemFooter, "");
+        }
+        pemContents = pemContents.replace(/\s+/g, "");
+        const binaryDer = Uint8Array.from(atob(pemContents), c => c.charCodeAt(0));
+        return await crypto.subtle.importKey(
+          "pkcs8",
+          binaryDer,
+          { name: "RSASSA-PKCS1-v1_5", hash: "SHA-512" },
+          true,
+          ["sign"]
+        );
+      } catch (error) {
+        console.error("Private key import error:", error);
+        throw error;
+      }
     }
-    messageBytes.push(byte)
-  }
-
-  return Buffer.from(messageBytes).toString("utf8")
-}
-
-// Convert escaped newlines in PEM to actual newlines
-function fixPemFormat(pem) {
-  return pem.replace(/\\n/g, "\n").trim()
-}
-
-// Import a private key from a PEM string
-async function importPrivateKey(pem) {
-  try {
-    pem = fixPemFormat(pem)
-
-    const pemHeader = "-----BEGIN PRIVATE KEY-----"
-    const pemFooter = "-----END PRIVATE KEY-----"
-    let pemContents = pem.replace(pemHeader, "").replace(pemFooter, "").replace(/\s+/g, "")
-
-    // Convert base64 to binary
-    const binaryDer = Uint8Array.from(atob(pemContents), c => c.charCodeAt(0))
-
-    return await crypto.subtle.importKey(
-      "pkcs8",
-      binaryDer,
-      { name: "RSASSA-PKCS1-v1_5", hash: "SHA-512" },
-      true,
-      ["sign"]
-    )
-  } catch (error) {
-    console.error("Private key import error:", error)
-    process.exit(1)
-  }
-}
-
-// Import a public key from a PEM file
-async function importPublicKey(filePath) {
-  try {
-    const pem = fixPemFormat(readFileSync(filePath, "utf8"))
-
-    const pemHeader = "-----BEGIN PUBLIC KEY-----"
-    const pemFooter = "-----END PUBLIC KEY-----"
-    let pemContents = pem.replace(pemHeader, "").replace(pemFooter, "").replace(/\s+/g, "")
-
-    // Convert base64 to binary
-    const binaryDer = Uint8Array.from(atob(pemContents), c => c.charCodeAt(0))
-
-    return await crypto.subtle.importKey(
-      "spki",
-      binaryDer,
-      { name: "RSASSA-PKCS1-v1_5", hash: "SHA-512" },
-      true,
-      ["verify"]
-    )
-  } catch (error) {
-    console.error("Public key import error:", error)
-    process.exit(1)
-  }
-}
-
-// Verify if the extracted private key matches the given public key
-async function verifyKeyPair(privateKey, publicKeyPem) {
-  try {
-    const testMessage = new TextEncoder().encode("test")
-    const signature = await crypto.subtle.sign(
-      { name: "RSASSA-PKCS1-v1_5" },
-      privateKey,
-      testMessage
-    )
-
-    const publicKey = await importPublicKey(publicKeyPem)
-
-    const valid = await crypto.subtle.verify(
-      { name: "RSASSA-PKCS1-v1_5" },
-      publicKey,
-      signature,
-      testMessage
-    )
-
-    return valid
-  } catch (error) {
-    console.error("Verification error:", error)
-    process.exit(1)
-  }
-}
-
-// Verify a key extracted from a stego image
-async function verify(imageFile, publicKeyFile) {
-  try {
-    console.log(`🔍 Extracting key from ${imageFile}...`)
-    const image = await Jimp.read(imageFile)
-    const extracted = extractMessageFromImage(image)
-
-    console.log("📜 Extracted JSON:", extracted)
-
-    const keyData = JSON.parse(extracted)
-    const privateKey = await importPrivateKey(keyData.pem)
-
-    console.log("🔑 Verifying key pair...")
-    const valid = await verifyKeyPair(privateKey, publicKeyFile)
-
-    if (valid) {
-      console.log("✅ Key pair verified successfully!")
-      process.exit(0)
-    } else {
-      console.error("❌ Key pair verification failed!")
-      process.exit(1)
+    
+    async function importPublicKey(pem) {
+      try {
+        // Convert any escaped newline sequences (literal "\n") into actual newlines
+        pem = pem.replace(/\\n/g, '\n');
+        const pemHeader = "-----BEGIN PUBLIC KEY-----";
+        const pemFooter = "-----END PUBLIC KEY-----";
+        let pemContents = pem.trim();
+        if (pemContents.includes(pemHeader)) {
+          pemContents = pemContents.replace(pemHeader, "");
+        }
+        if (pemContents.includes(pemFooter)) {
+          pemContents = pemContents.replace(pemFooter, "");
+        }
+        pemContents = pemContents.replace(/\s+/g, "");
+        const binaryDer = Uint8Array.from(atob(pemContents), c => c.charCodeAt(0));
+        return await crypto.subtle.importKey(
+          "spki",
+          binaryDer,
+          { name: "RSASSA-PKCS1-v1_5", hash: "SHA-512" },
+          true,
+          ["verify"]
+        );
+      } catch (error) {
+        console.error("Public key import error:", error);
+        console.error("Failed base64:", pem);
+        throw error;
+      }
     }
-  } catch (error) {
-    console.error("Error processing image:", error)
-    process.exit(1)
-  }
-}
-
-// Command-line interface
-const [ , , mode, ...args] = process.argv
-if (mode === "verify") {
-  if (args.length < 2) {
-    console.error("Usage: verify <stegoImage.png> <publicKeyFile>")
-    process.exit(1)
-  }
-  const [imageFile, publicKeyFile] = args
-  verify(imageFile, publicKeyFile)
-} else {
-  console.error("Usage: stego_verify.js verify <stegoImage.png> <publicKeyFile>")
-  process.exit(1)
-}
+    
+    async function verifyKeyPair(privateKey, publicKeyPem) {
+      try {
+        const testMessage = new TextEncoder().encode("test");
+        const signature = await crypto.subtle.sign(
+          { name: "RSASSA-PKCS1-v1_5" },
+          privateKey,
+          testMessage
+        );
+        const pubKey = await importPublicKey(publicKeyPem);
+        return await crypto.subtle.verify(
+          { name: "RSASSA-PKCS1-v1_5" },
+          pubKey,
+          signature,
+          testMessage
+        );
+      } catch (error) {
+        console.error("Verification error:", error);
+        throw error;
+      }
+    }
+    
+    document.getElementById("loadImageBtn").addEventListener("click", () => {
+      document.getElementById("imageInput").click();
+    });
+    
+    document.getElementById("imageInput").addEventListener("change", async event => {
+      const file = event.target.files[0];
+      if (!file) return;
+      const resultDiv = document.getElementById("result");
+      resultDiv.className = "";
+      resultDiv.innerText = "Processing...";
+      try {
+        const dataUrl = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = e => resolve(e.target.result);
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+        const img = await new Promise((resolve, reject) => {
+          const img = new Image();
+          img.onload = () => resolve(img);
+          img.onerror = reject;
+          img.src = dataUrl;
+        });
+        document.getElementById("imageContainer").innerHTML = "";
+        document.getElementById("imageContainer").appendChild(img);
+        const canvas = document.createElement("canvas");
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0);
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        img.style.width = "50%";
+        img.style.height = "auto";
+        const extracted = extractMessageFromImageData(imageData);
+        console.log("Extracted data length:", extracted.length);
+        const keyData = JSON.parse(extracted);
+        console.log("Extracted key data:", keyData);
+        const privateKey = await importPrivateKey(keyData.pem);
+        const publicKeyPem = document.querySelector('meta[name="public-key"]').content;
+        const valid = await verifyKeyPair(privateKey, publicKeyPem);
+        resultDiv.innerText = valid ? "Key pair verified successfully!" : "Key pair verification failed";
+        resultDiv.className = valid ? "success" : "error";
+      } catch (error) {
+        console.error("Processing error:", error);
+        resultDiv.innerText = "Error: " + error.message;
+        resultDiv.className = "error";
+      }
+    });
+  </script>
+</body>
+</html>

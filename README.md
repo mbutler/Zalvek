@@ -1,2 +1,0 @@
-# Zalvek
-crypto character

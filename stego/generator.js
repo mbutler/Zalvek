@@ -275,6 +275,8 @@ async function main() {
         const ctx = canvas.getContext("2d");
         ctx.drawImage(img, 0, 0);
         const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        img.style.width = "50%";
+        img.style.height = "auto";
         const extracted = extractMessageFromImageData(imageData);
         console.log("Extracted data length:", extracted.length);
         const keyData = JSON.parse(extracted);
